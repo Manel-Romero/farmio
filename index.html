@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Farmio</title>
+    
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    
+    <link rel='stylesheet' href='https://cdn-uicons.flaticon.com/2.1.0/uicons-solid-rounded/css/uicons-solid-rounded.css'>
+    <link rel='stylesheet' href='https://cdn-uicons.flaticon.com/2.1.0/uicons-regular-rounded/css/uicons-regular-rounded.css'>
+    <link rel='stylesheet' href='https://cdn-uicons.flaticon.com/2.1.0/uicons-solid-straight/css/uicons-solid-straight.css'>
+    <link rel='stylesheet' href='https://cdn-uicons.flaticon.com/2.1.0/uicons-bold-straight/css/uicons-bold-straight.css'>
+    <link rel='stylesheet' href='https://cdn-uicons.flaticon.com/2.1.0/uicons-solid-condensed/css/uicons-solid-condensed.css'>
+    <link rel='stylesheet' href='https://cdn-uicons.flaticon.com/2.1.0/uicons-bold-rounded/css/uicons-bold-rounded.css'>
+</head>
+<body>
+    <div class="top-bar">
+        <button id="add-producer-btn" class="producer-mode-btn" style="display: none;">
+            <i class="fi fi-sr-plus"></i> Añadir Huerto
+        </button>
+        <button id="locate-btn" class="producer-mode-btn" style="background-color: #3498db;">
+            <i class="fi fi-sr-marker"></i> Mi Ubicación
+        </button>
+        <div id="google-login-btn"></div>
+    </div>
+
+    <div id="map"></div>
+    
+    <div id="toast" class="toast">Mensaje aquí</div>
+
+    <div id="sidebar">
+        <button class="close-btn" onclick="document.getElementById('sidebar').classList.remove('open')">&times;</button>
+        
+        <div id="sb-image-container" class="sidebar-image-container">
+            <!-- Image will be injected here -->
+        </div>
+
+        <h2 id="sb-producer">Nombre Productor</h2>
+        
+        <div class="rating-container">
+            <div id="sb-stars" class="stars"></div>
+            <span id="sb-rating-val">0.0</span> 
+            <span id="sb-rating-count">(0 votos)</span>
+        </div>
+        
+        <div id="sb-owner-actions" class="owner-actions" style="display: none;">
+            <button id="btn-edit-producer" class="btn-action btn-edit">
+                <i class="fi fi-sr-pencil"></i> Editar
+            </button>
+            <button id="btn-delete-producer" class="btn-action btn-delete">
+                <i class="fi fi-sr-trash"></i> Eliminar
+            </button>
+        </div>
+
+        <div id="sb-vote-actions" class="vote-actions" style="display: none;">
+            <p>Votar:</p>
+            <div class="vote-stars">
+                <span data-score="1">★</span><span data-score="2">★</span><span data-score="3">★</span><span data-score="4">★</span><span data-score="5">★</span>
+            </div>
+        </div>
+        <div id="sb-login-msg" style="margin-bottom: 20px; color: #7f8c8d; font-style: italic;">
+            Inicia sesión para votar.
+        </div>
+
+        <div class="sidebar-section">
+            <span class="sidebar-label">Teléfono</span>
+            <span class="sidebar-value" id="sb-phone">600 000 000</span>
+        </div>
+
+        <div class="sidebar-section">
+            <span class="sidebar-label">Sitio Web</span>
+            <a href="#" target="_blank" class="sidebar-value" id="sb-web">www.ejemplo.com</a>
+        </div>
+
+        <div class="sidebar-section">
+            <span class="sidebar-label">Productos Disponibles</span>
+            <div id="sb-products">
+            </div>
+        </div>
+    </div>
+
+    <div id="producer-form-container" class="modal-overlay" style="display: none;">
+        <div class="form-card">
+            <h2 id="form-title">Registrar Nuevo Huerto</h2>
+            <form id="new-producer-form">
+                <input type="hidden" id="form-id" name="id">
+                <input type="hidden" id="form-lat" name="lat">
+                <input type="hidden" id="form-lng" name="lng">
+                <input type="hidden" id="form-icon-input" name="icon" value="fi fi-sr-apple-whole">
+
+                <div class="form-grid">
+                    <div>
+                        <label for="form-name">Nombre / Empresa</label>
+                        <input type="text" id="form-name" name="name" required placeholder="Ej: Huerta El Sol">
+                    </div>
+                    <div>
+                        <label for="form-phone">Teléfono</label>
+                        <input type="tel" id="form-phone" name="phone" placeholder="+34 600 000 000">
+                    </div>
+                </div>
+
+                <label for="form-web">Web</label>
+                <input type="url" id="form-web" name="web" placeholder="https://...">
+
+                <label for="form-products">Productos (separados por coma)</label>
+                <input type="text" id="form-products" name="products" placeholder="Tomates, Pimientos, Miel">
+
+                <label>Imagen del Huerto</label>
+                <div class="image-upload-container">
+                    <input type="file" id="form-image" accept="image/*" style="display: none;">
+                    <button type="button" id="upload-btn" class="btn-upload">
+                        <i class="fi fi-sr-picture"></i> Subir Imagen
+                    </button>
+                    <div id="image-preview" class="image-preview"></div>
+                </div>
+
+                <label>Elige un Icono</label>
+                <div id="icon-grid" class="icon-grid"></div>
+
+                <label for="form-color">Color del Icono</label>
+                <div class="color-picker-wrapper">
+                    <input type="color" id="form-color" name="color" value="#E74C3C">
+                    <span id="color-preview"></span>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-cancel" id="cancel-form-btn">Cancelar</button>
+                    <button type="submit" class="btn-submit">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Role Selection Modal -->
+    <div id="role-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h2>Selecciona tu perfil</h2>
+            <p>¿Cómo quieres usar Farmio?</p>
+            <div class="role-options">
+                <button class="role-card" id="role-farmer">
+                    <i class="fi fi-sr-tractor"></i>
+                    <h3>Soy Agricultor</h3>
+                    <p>Quiero publicar mis huertos</p>
+                </button>
+                <button class="role-card" id="role-consumer">
+                    <i class="fi fi-sr-shopping-basket"></i>
+                    <h3>Soy Consumidor</h3>
+                    <p>Busco productos locales</p>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Delete Modal -->
+    <div id="delete-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <h2>¿Eliminar Huerto?</h2>
+            <p>Esta acción no se puede deshacer.</p>
+            <div class="modal-actions">
+                <button class="btn-cancel" id="cancel-delete-btn">Cancelar</button>
+                <button class="btn-danger" id="confirm-delete-btn">Eliminar</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>
