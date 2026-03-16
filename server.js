@@ -311,11 +311,6 @@ app.put('/api/producers/:id', verifyGoogleToken, [
         let currentImages = producer.images ? JSON.parse(producer.images) : (producer.image ? [producer.image] : []);
         let newImagesPaths = [];
 
-        // Handle images update: user sends base64 for new, and maybe paths for existing? 
-        // Or user sends full array of desired images (base64 or path)
-        // Simplification: We assume the client sends what should be kept.
-        // Base64 strings are new uploads. Paths starting with /uploads/ are existing.
-        
         if (images && Array.isArray(images)) {
              images.forEach(img => {
                  if (img.startsWith('data:')) {
