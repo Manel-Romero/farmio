@@ -1,4 +1,4 @@
-.env*
+.env
 /uploads
 /node_modules
 /farmio*
