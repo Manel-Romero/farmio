@@ -39,7 +39,7 @@ app.use(helmet({
 
 app.use(cors());
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use('/uploads', express.static(uploadsDir));
 
 const limiter = rateLimit({
@@ -76,6 +76,8 @@ try {
         icon TEXT DEFAULT 'fi fi-sr-apple-whole',
         color TEXT DEFAULT '#E74C3C',
         image TEXT,
+        images TEXT,
+        description TEXT,
         rating_sum REAL DEFAULT 0,
         rating_count INTEGER DEFAULT 0,
         owner_id TEXT
@@ -89,15 +91,32 @@ try {
     if (!colNames.includes('rating_count')) db.prepare("ALTER TABLE producers ADD COLUMN rating_count INTEGER DEFAULT 0").run();
     if (!colNames.includes('owner_id')) db.prepare("ALTER TABLE producers ADD COLUMN owner_id TEXT").run();
     if (!colNames.includes('image')) db.prepare("ALTER TABLE producers ADD COLUMN image TEXT").run();
+    if (!colNames.includes('images')) db.prepare("ALTER TABLE producers ADD COLUMN images TEXT").run();
+    if (!colNames.includes('description')) db.prepare("ALTER TABLE producers ADD COLUMN description TEXT").run();
 
     db.exec(`
       CREATE TABLE IF NOT EXISTS votes (
         user_id TEXT,
         producer_id INTEGER,
+        score INTEGER,
+        comment TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id, producer_id)
       );
     `);
     
+    // Check if votes table needs migration
+    const voteColumns = db.prepare("PRAGMA table_info(votes)").all();
+    const voteColNames = voteColumns.map(c => c.name);
+    if (!voteColNames.includes('comment')) db.prepare("ALTER TABLE votes ADD COLUMN comment TEXT").run();
+    if (!voteColNames.includes('score')) db.prepare("ALTER TABLE votes ADD COLUMN score INTEGER").run();
+    if (!voteColNames.includes('created_at')) {
+        // SQLite doesn't support adding a column with CURRENT_TIMESTAMP default easily in ALTER TABLE
+        // So we add it without default and update existing rows
+        db.prepare("ALTER TABLE votes ADD COLUMN created_at DATETIME").run();
+        db.prepare("UPDATE votes SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL").run();
+    }
+
 } catch (error) {
     console.error("Error en migración DB:", error);
 }
@@ -203,11 +222,13 @@ app.get('/api/producers', (req, res) => {
         const parsedProducers = producers.map(p => ({
             ...p,
             products: p.products ? JSON.parse(p.products) : [],
+            images: p.images ? JSON.parse(p.images) : (p.image ? [p.image] : []),
             rating: p.rating_count > 0 ? (p.rating_sum / p.rating_count).toFixed(1) : 0,
             isOwner: false
         }));
         res.json(parsedProducers);
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: 'Error interno' });
     }
 });
@@ -222,7 +243,8 @@ app.post('/api/producers', verifyGoogleToken, [
     body('icon').trim().escape(),
     body('color').trim().isHexColor(),
     body('products').isArray(),
-    body('image').optional()
+    body('description').optional().trim().escape(),
+    body('images').optional().isArray()
 ], (req, res) => {
     if (req.user.role !== 'farmer') {
         return res.status(403).json({ error: 'Solo los agricultores pueden crear huertos' });
@@ -232,27 +254,27 @@ app.post('/api/producers', verifyGoogleToken, [
     if (!errors.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: errors.array() });
 
     try {
-        const { name, phone, web, products, lat, lng, icon, color, image } = req.body;
+        const { name, phone, web, products, lat, lng, icon, color, images, description } = req.body;
         const ownerId = req.user.id;
 
-        let imagePath = null;
-        if (image) {
-            imagePath = saveBase64Image(image);
+        let savedImages = [];
+        if (images && Array.isArray(images)) {
+            savedImages = images.map(img => saveBase64Image(img)).filter(p => p !== null);
         }
 
         const stmt = db.prepare(`
-            INSERT INTO producers (name, phone, web, products, lat, lng, icon, color, owner_id, image)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO producers (name, phone, web, products, lat, lng, icon, color, owner_id, images, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const sanitizedProducts = products.map(p => p.toString().substring(0, 50));
 
         const info = stmt.run(
             name, phone || '', web || '', JSON.stringify(sanitizedProducts), 
-            lat, lng, icon || 'fi fi-sr-apple-whole', color || '#E74C3C', ownerId, imagePath
+            lat, lng, icon || 'fi fi-sr-apple-whole', color || '#E74C3C', ownerId, JSON.stringify(savedImages), description || ''
         );
 
-        res.status(201).json({ id: info.lastInsertRowid, message: 'Productor registrado', image: imagePath });
+        res.status(201).json({ id: info.lastInsertRowid, message: 'Productor registrado', images: savedImages });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Error al guardar' });
@@ -269,11 +291,12 @@ app.put('/api/producers/:id', verifyGoogleToken, [
     body('icon').trim().escape(),
     body('color').trim().isHexColor(),
     body('products').isArray(),
-    body('image').optional()
+    body('description').optional().trim().escape(),
+    body('images').optional().isArray()
 ], (req, res) => {
     const producerId = req.params.id;
     
-    const checkStmt = db.prepare('SELECT owner_id, image FROM producers WHERE id = ?');
+    const checkStmt = db.prepare('SELECT owner_id, images, image FROM producers WHERE id = ?');
     const producer = checkStmt.get(producerId);
     
     if (!producer) return res.status(404).json({ error: 'Huerto no encontrado' });
@@ -283,19 +306,37 @@ app.put('/api/producers/:id', verifyGoogleToken, [
     if (!errors.isEmpty()) return res.status(400).json({ error: 'Datos inválidos', details: errors.array() });
 
     try {
-        const { name, phone, web, products, lat, lng, icon, color, image } = req.body;
+        const { name, phone, web, products, lat, lng, icon, color, images, description } = req.body;
         
-        let imagePath = producer.image;
-        if (image && image.startsWith('data:')) {
-            if (producer.image && fs.existsSync(path.join(__dirname, producer.image))) {
-                try { fs.unlinkSync(path.join(__dirname, producer.image)); } catch(e) {}
-            }
-            imagePath = saveBase64Image(image);
+        let currentImages = producer.images ? JSON.parse(producer.images) : (producer.image ? [producer.image] : []);
+        let newImagesPaths = [];
+
+        // Handle images update: user sends base64 for new, and maybe paths for existing? 
+        // Or user sends full array of desired images (base64 or path)
+        // Simplification: We assume the client sends what should be kept.
+        // Base64 strings are new uploads. Paths starting with /uploads/ are existing.
+        
+        if (images && Array.isArray(images)) {
+             images.forEach(img => {
+                 if (img.startsWith('data:')) {
+                     const path = saveBase64Image(img);
+                     if (path) newImagesPaths.push(path);
+                 } else if (img.startsWith('/uploads/')) {
+                     newImagesPaths.push(img);
+                 }
+             });
         }
+        
+        // Find deleted images to cleanup fs
+        const deletedImages = currentImages.filter(img => !newImagesPaths.includes(img));
+        deletedImages.forEach(img => {
+             const p = path.join(__dirname, img);
+             if (fs.existsSync(p)) try { fs.unlinkSync(p); } catch(e) {}
+        });
 
         const stmt = db.prepare(`
             UPDATE producers 
-            SET name = ?, phone = ?, web = ?, products = ?, lat = ?, lng = ?, icon = ?, color = ?, image = ?
+            SET name = ?, phone = ?, web = ?, products = ?, lat = ?, lng = ?, icon = ?, color = ?, images = ?, description = ?
             WHERE id = ?
         `);
 
@@ -303,10 +344,10 @@ app.put('/api/producers/:id', verifyGoogleToken, [
 
         stmt.run(
             name, phone || '', web || '', JSON.stringify(sanitizedProducts), 
-            lat, lng, icon || 'fi fi-sr-apple-whole', color || '#E74C3C', imagePath, producerId
+            lat, lng, icon || 'fi fi-sr-apple-whole', color || '#E74C3C', JSON.stringify(newImagesPaths), description || '', producerId
         );
 
-        res.json({ message: 'Huerto actualizado', image: imagePath });
+        res.json({ message: 'Huerto actualizado', images: newImagesPaths });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Error al actualizar' });
@@ -317,7 +358,7 @@ app.put('/api/producers/:id', verifyGoogleToken, [
 app.delete('/api/producers/:id', verifyGoogleToken, (req, res) => {
     const producerId = req.params.id;
     
-    const checkStmt = db.prepare('SELECT owner_id, image FROM producers WHERE id = ?');
+    const checkStmt = db.prepare('SELECT owner_id, images, image FROM producers WHERE id = ?');
     const producer = checkStmt.get(producerId);
     
     if (!producer) return res.status(404).json({ error: 'Huerto no encontrado' });
@@ -327,12 +368,13 @@ app.delete('/api/producers/:id', verifyGoogleToken, (req, res) => {
         const stmt = db.prepare('DELETE FROM producers WHERE id = ?');
         stmt.run(producerId);
         
-        if (producer.image) {
-            const filePath = path.join(__dirname, producer.image);
+        let imagesToDelete = producer.images ? JSON.parse(producer.images) : (producer.image ? [producer.image] : []);
+        imagesToDelete.forEach(img => {
+            const filePath = path.join(__dirname, img);
             if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
+                try { fs.unlinkSync(filePath); } catch(e) {}
             }
-        }
+        });
 
         res.json({ message: 'Huerto eliminado' });
     } catch (error) {
@@ -341,13 +383,14 @@ app.delete('/api/producers/:id', verifyGoogleToken, (req, res) => {
 });
 
 app.post('/api/producers/:id/rate', verifyGoogleToken, [
-    body('score').isInt({ min: 1, max: 5 })
+    body('score').isInt({ min: 1, max: 5 }),
+    body('comment').optional().trim().escape()
 ], (req, res) => {
     const errors = validationResult(req);
-    if (!errors.isEmpty()) return res.status(400).json({ error: 'Puntuación inválida' });
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Datos inválidos' });
 
     const producerId = req.params.id;
-    const score = req.body.score;
+    const { score, comment } = req.body;
     const userId = req.user.id;
 
     try {
@@ -357,8 +400,8 @@ app.post('/api/producers/:id/rate', verifyGoogleToken, [
                 throw new Error('Ya has votado a este productor');
             }
 
-            const insertVote = db.prepare('INSERT INTO votes (user_id, producer_id) VALUES (?, ?)');
-            insertVote.run(userId, producerId);
+            const insertVote = db.prepare('INSERT INTO votes (user_id, producer_id, score, comment) VALUES (?, ?, ?, ?)');
+            insertVote.run(userId, producerId, score, comment || '');
 
             const updateProducer = db.prepare(`
                 UPDATE producers 
@@ -377,6 +420,25 @@ app.post('/api/producers/:id/rate', verifyGoogleToken, [
             return res.status(409).json({ error: error.message });
         }
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Get Reviews
+app.get('/api/producers/:id/reviews', (req, res) => {
+    const producerId = req.params.id;
+    try {
+        const stmt = db.prepare(`
+            SELECT v.score, v.comment, v.created_at, u.name as user_name 
+            FROM votes v 
+            LEFT JOIN users u ON v.user_id = u.id 
+            WHERE v.producer_id = ? 
+            ORDER BY v.created_at DESC
+        `);
+        const reviews = stmt.all(producerId);
+        res.json(reviews);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Error obteniendo reseñas' });
     }
 });
 

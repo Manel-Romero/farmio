@@ -1,5 +1,11 @@
 import 'leaflet/dist/leaflet.css';
+import 'leaflet.markercluster/dist/MarkerCluster.css';
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import L from 'leaflet';
+
+window.L = L;
+import 'leaflet.markercluster';
+
 import './style.css';
 import { iconClasses } from './icons.js';
 
@@ -17,13 +23,26 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 20
 }).addTo(map);
 
-let markers = [];
+let markers = L.markerClusterGroup();
+map.addLayer(markers);
+
 let isAddingMode = false;
 let tempMarker = null;
 let currentProducerId = null;
+let userLocationMarker = null;
+let selectedRating = 0;
 
 // DOM Elements
 const sidebar = document.getElementById('sidebar');
+
+const closeBtn = sidebar.querySelector('.close-btn');
+if (closeBtn) {
+    closeBtn.onclick = () => {
+        sidebar.classList.remove('open');
+        stopCarousel();
+    };
+}
+
 const sbName = document.getElementById('sb-producer');
 const sbPhone = document.getElementById('sb-phone');
 const sbWeb = document.getElementById('sb-web');
@@ -35,10 +54,15 @@ const sbImageContainer = document.getElementById('sb-image-container');
 const sbOwnerActions = document.getElementById('sb-owner-actions');
 const btnEditProducer = document.getElementById('btn-edit-producer');
 const btnDeleteProducer = document.getElementById('btn-delete-producer');
+const btnGoogleMaps = document.getElementById('btn-google-maps');
+const sbDescription = document.getElementById('sb-description');
+const sbReviews = document.getElementById('sb-reviews');
 
 const voteStars = document.querySelectorAll('.vote-stars span');
 const sbVoteActions = document.getElementById('sb-vote-actions');
 const sbLoginMsg = document.getElementById('sb-login-msg');
+const voteComment = document.getElementById('vote-comment');
+const submitVoteBtn = document.getElementById('submit-vote-btn');
 
 const addProducerBtn = document.getElementById('add-producer-btn');
 const producerFormContainer = document.getElementById('producer-form-container');
@@ -80,6 +104,11 @@ async function initGoogleAuth() {
         
     } catch (error) {
         console.error('Error inicializando Google Auth:', error);
+        const loginBtn = document.getElementById("google-login-btn");
+        if (loginBtn) {
+            loginBtn.innerHTML = '<span style="color: red; background: white; padding: 5px; border-radius: 5px; font-size: 12px; font-weight: bold;">⚠️ Error de conexión</span>';
+            loginBtn.style.display = 'block';
+        }
     }
 }
 
@@ -194,12 +223,75 @@ function renderStars(rating) {
     return html;
 }
 
+async function loadReviews(producerId) {
+    try {
+        const res = await fetch(`${API_URL}/${producerId}/reviews`);
+        const reviews = await res.json();
+        
+        sbReviews.innerHTML = '';
+        
+        const reviewsWithComments = reviews.filter(r => r.comment && r.comment.trim() !== '');
+
+        if (reviewsWithComments.length === 0) {
+            sbReviews.innerHTML = '<p style="color: #999; font-style: italic;">No hay comentarios aún.</p>';
+            return;
+        }
+
+        reviewsWithComments.forEach(r => {
+            const div = document.createElement('div');
+            div.className = 'review-item';
+            
+            div.innerHTML = `
+                <div class="review-header">
+                    <strong>${r.user_name}</strong>
+                    <span class="review-stars">${renderStars(r.score)}</span>
+                </div>
+                <p class="review-comment">${r.comment}</p>
+                <span class="review-date">${new Date(r.created_at).toLocaleDateString()}</span>
+            `;
+            sbReviews.appendChild(div);
+        });
+    } catch (e) { console.error(e); }
+}
+
+let carouselInterval;
+let carouselIndex = 0;
+
+function startCarousel(images) {
+    if (carouselInterval) clearInterval(carouselInterval);
+    if (!images || images.length <= 1) return;
+
+    const container = sbImageContainer;
+    const imgElements = container.querySelectorAll('img');
+    
+    const autoFade = () => {
+        imgElements[carouselIndex].classList.remove('active');
+        
+        carouselIndex++;
+        if (carouselIndex >= images.length) {
+            carouselIndex = 0;
+        }
+        
+        imgElements[carouselIndex].classList.add('active');
+
+        const nextDelay = 3000 + Math.random() * 2000;
+        carouselInterval = setTimeout(autoFade, nextDelay);
+    };
+
+    carouselInterval = setTimeout(autoFade, 3000);
+}
+
+function stopCarousel() {
+    if (carouselInterval) clearTimeout(carouselInterval);
+}
+
 function openSidebar(producer) {
     if (isAddingMode) return;
     
     currentProducerId = producer.id;
     sbName.textContent = producer.name;
     sbPhone.textContent = producer.phone || 'No disponible';
+    sbDescription.textContent = producer.description || 'Sin descripción';
     
     if (producer.web) {
         sbWeb.textContent = producer.web;
@@ -208,13 +300,30 @@ function openSidebar(producer) {
     } else {
         sbWeb.style.display = 'none';
     }
+
+    btnGoogleMaps.onclick = () => {
+        const url = `https://www.google.com/maps/dir/?api=1&destination=${producer.lat},${producer.lng}`;
+        window.open(url, '_blank');
+    };
     
-    // Image
+    // Images
     sbImageContainer.innerHTML = '';
-    if (producer.image) {
-        const img = document.createElement('img');
-        img.src = producer.image;
-        sbImageContainer.appendChild(img);
+    stopCarousel();
+    carouselIndex = 0;
+
+    if (producer.images && producer.images.length > 0) {
+        producer.images.forEach((imgSrc, index) => {
+             const img = document.createElement('img');
+             img.src = imgSrc;
+             // First image active by default
+             if (index === 0) img.classList.add('active');
+             sbImageContainer.appendChild(img);
+        });
+        
+        if (producer.images.length > 1) {
+            startCarousel(producer.images);
+        }
+        
     }
     
     sbStars.textContent = renderStars(producer.rating || 0);
@@ -244,11 +353,15 @@ function openSidebar(producer) {
     if (currentUser) {
         sbVoteActions.style.display = 'block';
         sbLoginMsg.style.display = 'none';
+        voteComment.value = '';
+        selectedRating = 0;
+        updateVoteStars(0);
     } else {
         sbVoteActions.style.display = 'none';
         sbLoginMsg.style.display = 'block';
     }
 
+    loadReviews(producer.id);
     sidebar.classList.add('open');
 }
 
@@ -265,21 +378,34 @@ btnEditProducer.onclick = () => {
     document.getElementById('form-phone').value = producer.phone || '';
     document.getElementById('form-web').value = producer.web || '';
     document.getElementById('form-products').value = Array.isArray(producer.products) ? producer.products.join(', ') : '';
+    document.getElementById('form-description').value = producer.description || '';
     document.getElementById('form-color').value = producer.color || '#E74C3C';
     
     formIconInput.value = producer.icon || 'fi fi-sr-apple-whole';
     renderIconGrid();
 
     // Image Preview
-    if (producer.image) {
-        imagePreview.innerHTML = `<img src="${producer.image}">`;
+    imagePreview.innerHTML = '';
+    newProducerForm.dataset.images = JSON.stringify(producer.images || []);
+    
+    if (producer.images && producer.images.length > 0) {
         imagePreview.classList.add('visible');
+        producer.images.forEach(src => {
+            const imgDiv = document.createElement('div');
+            imgDiv.className = 'preview-item';
+            imgDiv.innerHTML = `<img src="${src}"><button type="button" class="remove-img">&times;</button>`;
+            imgDiv.querySelector('.remove-img').onclick = () => {
+                let imgs = JSON.parse(newProducerForm.dataset.images);
+                imgs = imgs.filter(i => i !== src);
+                newProducerForm.dataset.images = JSON.stringify(imgs);
+                imgDiv.remove();
+            };
+            imagePreview.appendChild(imgDiv);
+        });
     } else {
-        imagePreview.innerHTML = '';
         imagePreview.classList.remove('visible');
     }
     
-    delete newProducerForm.dataset.imageData; // Clear any previous temp image
     document.getElementById('form-title').textContent = 'Editar Huerto';
     producerFormContainer.style.display = 'flex';
     sidebar.classList.remove('open');
@@ -311,50 +437,66 @@ cancelDeleteBtn.onclick = () => {
 };
 
 // Voting Logic
+function updateVoteStars(score) {
+    voteStars.forEach((s, index) => {
+        if (index < score) s.classList.add('hovered');
+        else s.classList.remove('hovered');
+    });
+}
+
 voteStars.forEach(star => {
-    star.addEventListener('click', async () => {
-        if (!currentProducerId) return;
-        if (!currentUser) {
-            showToast('Debes iniciar sesión con Google para votar');
-            return;
-        }
-
-        const score = parseInt(star.getAttribute('data-score'));
-        
-        try {
-            const response = await fetch(`${API_URL}/${currentProducerId}/rate`, {
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${currentUser.token}`
-                },
-                body: JSON.stringify({ score })
-            });
-
-            if (response.ok) {
-                showToast('¡Voto registrado!');
-                loadProducers(); 
-            } else {
-                const err = await response.json();
-                showToast(err.error || 'Error al votar');
-            }
-        } catch (error) {
-            showToast('Error de conexión');
-        }
+    star.addEventListener('click', () => {
+        selectedRating = parseInt(star.getAttribute('data-score'));
+        updateVoteStars(selectedRating);
     });
     
     star.addEventListener('mouseover', () => {
         const score = parseInt(star.getAttribute('data-score'));
-        voteStars.forEach((s, index) => {
-            if (index < score) s.classList.add('hovered');
-            else s.classList.remove('hovered');
-        });
+        updateVoteStars(score);
     });
 
     star.addEventListener('mouseout', () => {
-        voteStars.forEach(s => s.classList.remove('hovered'));
+        updateVoteStars(selectedRating);
     });
 });
+
+submitVoteBtn.onclick = async () => {
+    if (!currentProducerId) return;
+    if (!currentUser) {
+        showToast('Debes iniciar sesión');
+        return;
+    }
+    if (selectedRating === 0) {
+        showToast('Selecciona una puntuación');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_URL}/${currentProducerId}/rate`, {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentUser.token}`
+            },
+            body: JSON.stringify({ 
+                score: selectedRating,
+                comment: voteComment.value
+            })
+        });
+
+        if (response.ok) {
+            showToast('¡Voto registrado!');
+            loadProducers();
+            loadReviews(currentProducerId);
+            voteComment.value = '';
+        } else {
+            const err = await response.json();
+            showToast(err.error || 'Error al votar');
+        }
+    } catch (error) {
+        showToast('Error de conexión');
+    }
+};
 
 // Load Producers
 async function loadProducers() {
@@ -362,8 +504,7 @@ async function loadProducers() {
         const response = await fetch(API_URL);
         currentProducers = await response.json();
         
-        markers.forEach(m => map.removeLayer(m));
-        markers = [];
+        markers.clearLayers();
 
         currentProducers.forEach(producer => {
             const marker = L.marker([producer.lat, producer.lng], { 
@@ -382,8 +523,7 @@ async function loadProducers() {
                 openSidebar(producer);
             });
 
-            markers.push(marker);
-            marker.addTo(map);
+            markers.addLayer(marker);
         });
         
         // Refresh sidebar if open to show updated rating/data
@@ -431,6 +571,7 @@ map.on('click', (e) => {
     if (!isAddingMode) {
         if (!e.originalEvent.target.closest('.leaflet-marker-icon')) {
             sidebar.classList.remove('open');
+            stopCarousel();
         }
         return;
     }
@@ -448,7 +589,7 @@ map.on('click', (e) => {
     document.getElementById('form-title').textContent = 'Registrar Nuevo Huerto';
     imagePreview.innerHTML = '';
     imagePreview.classList.remove('visible');
-    delete newProducerForm.dataset.imageData;
+    newProducerForm.dataset.images = '[]';
     
     producerFormContainer.style.display = 'flex';
 });
@@ -465,33 +606,54 @@ cancelFormBtn.addEventListener('click', () => {
 uploadBtn.onclick = () => formImageInput.click();
 
 formImageInput.onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
 
-    try {
-        const compressedBase64 = await compressImage(file);
-        // Show preview
-        imagePreview.innerHTML = `<img src="${compressedBase64}">`;
-        imagePreview.classList.add('visible');
-        newProducerForm.dataset.imageData = compressedBase64;
-    } catch (err) {
-        console.error(err);
-        showToast('Error al procesar la imagen');
+    let currentImages = JSON.parse(newProducerForm.dataset.images || '[]');
+    if (currentImages.length + files.length > 10) {
+        showToast('Máximo 10 imágenes permitidas');
+        return;
     }
+
+    imagePreview.classList.add('visible');
+
+    const compressionPromises = files.map(file => compressImage(file).catch(err => {
+        console.error('Error comprimiendo imagen:', err);
+        return null;
+    }));
+
+    const compressedImages = await Promise.all(compressionPromises);
+
+    compressedImages.forEach(compressedBase64 => {
+        if (!compressedBase64) return;
+        
+        currentImages.push(compressedBase64);
+        
+        const imgDiv = document.createElement('div');
+        imgDiv.className = 'preview-item';
+        imgDiv.innerHTML = `<img src="${compressedBase64}"><button type="button" class="remove-img">&times;</button>`;
+        imgDiv.querySelector('.remove-img').onclick = () => {
+            currentImages = currentImages.filter(i => i !== compressedBase64);
+            newProducerForm.dataset.images = JSON.stringify(currentImages);
+            imgDiv.remove();
+        };
+        imagePreview.appendChild(imgDiv);
+    });
+
+    newProducerForm.dataset.images = JSON.stringify(currentImages);
+    formImageInput.value = '';
 };
 
 function compressImage(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.readAsDataURL(file);
         reader.onload = (event) => {
             const img = new Image();
-            img.src = event.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
                 let width = img.width;
                 let height = img.height;
-                const maxSize = 720;
+                const maxSize = 800;
                 
                 if (width > height) {
                     if (width > maxSize) {
@@ -509,11 +671,14 @@ function compressImage(file) {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                resolve(canvas.toDataURL('image/jpeg', 0.8));
+                // Calidad 0.7 es suficiente para web y ahorra mucho espacio
+                resolve(canvas.toDataURL('image/jpeg', 0.7));
             };
             img.onerror = reject;
+            img.src = event.target.result;
         };
         reader.onerror = reject;
+        reader.readAsDataURL(file);
     });
 }
 
@@ -530,12 +695,13 @@ newProducerForm.addEventListener('submit', async (e) => {
         name: formData.get('name'),
         phone: formData.get('phone'),
         web: formData.get('web'),
+        description: formData.get('description'),
         products: formData.get('products').split(',').filter(p => p.trim() !== ''),
         icon: formData.get('icon'),
         color: formData.get('color'),
         lat: parseFloat(formData.get('lat')),
         lng: parseFloat(formData.get('lng')),
-        image: newProducerForm.dataset.imageData || null
+        images: JSON.parse(newProducerForm.dataset.images || '[]')
     };
 
     const url = isEdit ? `${API_URL}/${id}` : API_URL;
@@ -555,7 +721,7 @@ newProducerForm.addEventListener('submit', async (e) => {
             showToast(isEdit ? 'Huerto actualizado' : 'Huerto registrado');
             producerFormContainer.style.display = 'none';
             newProducerForm.reset();
-            delete newProducerForm.dataset.imageData;
+            newProducerForm.dataset.images = '[]';
             
             disableAddingMode();
             loadProducers();
@@ -574,8 +740,6 @@ formColor.addEventListener('input', (e) => {
         icon.style.color = color;
     });
 });
-
-let userLocationMarker = null;
 
 // Geolocation
 function locateUser() {

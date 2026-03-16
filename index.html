@@ -30,10 +30,9 @@
     <div id="toast" class="toast">Mensaje aquí</div>
 
     <div id="sidebar">
-        <button class="close-btn" onclick="document.getElementById('sidebar').classList.remove('open')">&times;</button>
+        <button class="close-btn">&times;</button>
         
         <div id="sb-image-container" class="sidebar-image-container">
-            <!-- Image will be injected here -->
         </div>
 
         <h2 id="sb-producer">Nombre Productor</h2>
@@ -54,13 +53,20 @@
         </div>
 
         <div id="sb-vote-actions" class="vote-actions" style="display: none;">
-            <p>Votar:</p>
+            <p>Valorar:</p>
             <div class="vote-stars">
                 <span data-score="1">★</span><span data-score="2">★</span><span data-score="3">★</span><span data-score="4">★</span><span data-score="5">★</span>
             </div>
+            <textarea id="vote-comment" placeholder="Escribe un comentario (opcional)" class="vote-comment-box"></textarea>
+            <button id="submit-vote-btn" class="btn-submit-vote">Enviar Valoración</button>
         </div>
         <div id="sb-login-msg" style="margin-bottom: 20px; color: #7f8c8d; font-style: italic;">
-            Inicia sesión para votar.
+            Inicia sesión para valorar.
+        </div>
+
+        <div class="sidebar-section">
+            <span class="sidebar-label">Descripción</span>
+            <p id="sb-description" class="sidebar-value" style="font-size: 0.95em; line-height: 1.5;">Sin descripción</p>
         </div>
 
         <div class="sidebar-section">
@@ -74,8 +80,20 @@
         </div>
 
         <div class="sidebar-section">
+            <button id="btn-google-maps" class="btn-action" style="background-color: #4285F4; width: 100%;">
+                <i class="fi fi-sr-map-marker"></i> Cómo llegar
+            </button>
+        </div>
+
+        <div class="sidebar-section">
             <span class="sidebar-label">Productos Disponibles</span>
             <div id="sb-products">
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <span class="sidebar-label">Reseñas</span>
+            <div id="sb-reviews" class="reviews-list">
             </div>
         </div>
     </div>
@@ -106,13 +124,16 @@
                 <label for="form-products">Productos (separados por coma)</label>
                 <input type="text" id="form-products" name="products" placeholder="Tomates, Pimientos, Miel">
 
-                <label>Imagen del Huerto</label>
+                <label for="form-description">Descripción</label>
+                <textarea id="form-description" name="description" rows="3" placeholder="Describe tu huerto..."></textarea>
+
+                <label>Galería</label>
                 <div class="image-upload-container">
-                    <input type="file" id="form-image" accept="image/*" style="display: none;">
+                    <input type="file" id="form-image" accept="image/*" multiple style="display: none;">
                     <button type="button" id="upload-btn" class="btn-upload">
-                        <i class="fi fi-sr-picture"></i> Subir Imagen
+                        <i class="fi fi-sr-picture"></i> Subir Imágenes
                     </button>
-                    <div id="image-preview" class="image-preview"></div>
+                    <div id="image-preview" class="image-preview-grid"></div>
                 </div>
 
                 <label>Elige un Icono</label>

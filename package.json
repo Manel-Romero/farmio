@@ -13,7 +13,6 @@
   "license": "ISC",
   "dependencies": {
     "better-sqlite3": "^12.6.2",
-    "body-parser": "^2.2.2",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -23,8 +22,7 @@
     "google-auth-library": "^10.6.1",
     "helmet": "^8.1.0",
     "leaflet": "^1.9.4",
-    "nodemailer": "^8.0.2",
-    "twilio": "^5.13.0"
+    "leaflet.markercluster": "^1.5.3"
   },
   "devDependencies": {
     "vite": "^7.3.1"
