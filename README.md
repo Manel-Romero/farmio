@@ -31,30 +31,16 @@ GOOGLE_CLIENT_ID=tu_google_client_id_aqui
 
 ## Ejecución
 
-### Opción Rápida (Linux/Mac)
-
-```bash
-chmod +x start.sh
-./start.sh
-```
-
-### Opción Manual (Cualquier SO)
-
-### 1. Iniciar el Backend
-
-```bash
-node server.js
-```
-El servidor se iniciará en `http://localhost:3001`.
-
-### 2. Iniciar el Frontend
-
-Abre **otra** terminal y ejecuta:
-
 ```bash
 npm run dev
 ```
-El cliente estará disponible en `http://localhost:5173`.
+
+- El **Frontend** estará disponible en `http://localhost:5173`.
+- El **Backend** estará corriendo internamente en `http://localhost:3001`.
+
+Para ejecutarlos por separado, usar:
+- `npm run server` para iniciar solo el backend.
+- `npx vite` para iniciar solo el frontend.
 
 ## Estructura del Proyecto
 
